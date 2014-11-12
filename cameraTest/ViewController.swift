@@ -8,17 +8,14 @@
 
 import UIKit
 import AVFoundation
+import Foundation
 
 class ViewController: UIViewController {
     
     let captureSession = AVCaptureSession()
     var previewLayer : AVCaptureVideoPreviewLayer?
-    var captureConnection = AVCaptureConnection()
-    let devices = AVCaptureDevice.devices()
-    var capture = AVCaptureStillImageOutput()
-    
-    // If we find a device we'll store it here for later use
-    var captureDevice : AVCaptureDevice?
+    let captureDevice = AVCaptureDevice.defaultDeviceWithMediaType(AVMediaTypeVideo)
+    let capture = AVCaptureStillImageOutput()
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -26,53 +23,18 @@ class ViewController: UIViewController {
         // Do any additional setup after loading the view, typically from a nib.
         captureSession.sessionPreset = AVCaptureSessionPresetHigh
         
-        // Loop through all the capture devices on this phone
-        for device in devices {
-            // Make sure this particular device supports video
-            if (device.hasMediaType(AVMediaTypeVideo)) {
-                // Finally check the position and confirm we've got the back camera
-                if(device.position == AVCaptureDevicePosition.Back) {
-                    captureDevice = device as? AVCaptureDevice
-                    if captureDevice != nil {
-                        println("Capture device found")
-                        beginSession()
-                    }
-                }
-            }
-        }
-        
+        beginSession()
     }
     
     func takePhoto(){
-        var connection : AVCaptureConnection
-        var port : AVCaptureInputPort
-        
         // we do this on another thread so that we don't hang the UI
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)) {
-            //find the video connection
-            var videoConnection : AVCaptureConnection?
+            var videoConnection = self.capture.connectionWithMediaType(AVMediaTypeVideo)
             
-            println(self.capture.connections.count)
-            
-            for connecton in self.capture.connections {
-                //find a matching input port
-                for port in connecton.inputPorts! {
-                    if port.mediaType == AVMediaTypeVideo {
-                        videoConnection = connecton as? AVCaptureConnection
-                        break //for port
-                    }
-                }
-                
-                if videoConnection  != nil {
-                    break// for connections
-                }
-            }
-            
-            if videoConnection  != nil {
+            if videoConnection != nil {
                 self.capture.captureStillImageAsynchronouslyFromConnection(videoConnection){
                     (imageSampleBuffer : CMSampleBuffer!, _) in
                     
-                    println("snap")
                     let imageDataJpeg = AVCaptureStillImageOutput.jpegStillImageNSDataRepresentation(imageSampleBuffer)
                     var pickedImage: UIImage = UIImage(data: imageDataJpeg)!
                 }
@@ -80,6 +42,42 @@ class ViewController: UIViewController {
                 self.captureSession.stopRunning()
             }
         }
+    }
+    
+    @IBAction func getEventTime(sender: AnyObject) {
+        let url = NSURL(string: "http://107.170.209.55:3000/")
+        
+        let task = NSURLSession.sharedSession().dataTaskWithURL(url!) {(data, response, error) in
+            println(NSString(data: data, encoding: NSUTF8StringEncoding))
+            var error: NSError?
+            let jsonData: NSData = data
+            let jsonDict = NSJSONSerialization.JSONObjectWithData(jsonData, options: nil, error: &error) as NSDictionary
+            
+            var serverTime = jsonDict["serverTime"] as NSTimeInterval
+            var eventTime = jsonDict["eventAt"] as? NSTimeInterval
+            
+            println(eventTime)
+            
+            var clientDate = NSDate()
+            var serverDate = NSDate(timeIntervalSince1970: serverTime / 1000)
+        
+            if eventTime != nil {
+                var eventDate = NSDate(timeIntervalSince1970: eventTime! / 1000)
+                let elapsedTime = NSDate().timeIntervalSinceDate(eventDate)
+                let duration = Int64(elapsedTime)
+                
+                println(abs(duration))
+                
+                var delta: Int64 = abs(duration) * Int64(NSEC_PER_SEC)
+                var time = dispatch_time(DISPATCH_TIME_NOW, delta)
+                
+                dispatch_after(time, dispatch_get_main_queue(), {
+                    self.takePhoto()
+                });
+            }
+        }
+    
+        task.resume()
     }
     
     func beginSession() {
@@ -91,7 +89,9 @@ class ViewController: UIViewController {
         }
         
         var err : NSError? = nil
+        
         captureSession.addInput(AVCaptureDeviceInput(device: captureDevice, error: &err))
+        captureSession.addOutput(capture)
         
         if err != nil {
             println("error: \(err?.localizedDescription)")
@@ -101,17 +101,7 @@ class ViewController: UIViewController {
         self.view.layer.addSublayer(previewLayer)
         previewLayer?.frame = self.view.layer.frame
         captureSession.startRunning()
-        
-        var delta: Int64 = 2 * Int64(NSEC_PER_SEC)
-        
-        var time = dispatch_time(DISPATCH_TIME_NOW, delta)
-        
-        dispatch_after(time, dispatch_get_main_queue(), {
-            self.takePhoto()
-        });
     }
-    
-    
 }
 
 
